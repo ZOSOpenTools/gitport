@@ -1,0 +1,57 @@
+diff --git a/unpack-trees.c b/unpack-trees.c
+index b42020f..1bf3223 100644
+--- a/unpack-trees.c
++++ b/unpack-trees.c
+@@ -481,12 +481,30 @@ static int check_updates(struct unpack_trees_options *o,
+ 
+ 	get_parallel_checkout_configs(&pc_workers, &pc_threshold);
+ 
++#ifdef __MVS__
++	int gitattributes_updated = 0;
++#endif
++
+ 	enable_delayed_checkout(&state);
+ 	if (pc_workers > 1)
+ 		init_parallel_checkout();
+ 	for (i = 0; i < index->cache_nr; i++) {
+ 		struct cache_entry *ce = index->cache[i];
+ 
++#ifdef __MVS__
++		/*
++		 * Track if any .gitattributes file is being checked out.
++		 * Check basename to catch both root and subdirectory .gitattributes.
++		 * We need to invalidate attribute cache if any changed.
++		 */
++		if (must_checkout(ce)) {
++			const char *basename = strrchr(ce->name, '/');
++			basename = basename ? basename + 1 : ce->name;
++			if (!strcmp(basename, GITATTRIBUTES_FILE))
++				gitattributes_updated = 1;
++		}
++#endif
++
+ 		if (must_checkout(ce)) {
+ 			size_t last_pc_queue_size = pc_queue_size();
+ 
+@@ -505,6 +523,21 @@ static int check_updates(struct unpack_trees_options *o,
+ 					      progress, &cnt);
+ 	stop_progress(&progress);
+ 	errs |= finish_delayed_checkout(&state, o->verbose_update);
++
++#ifdef __MVS__
++	/*
++	 * If .gitattributes was updated during checkout, invalidate the
++	 * attribute cache by toggling the direction. This ensures that
++	 * subsequent file tagging operations use the new attributes.
++	 * This fixes the bug where git pull doesn't update file tags correctly
++	 * when encoding changes and .gitattributes is also updated.
++	 */
++	if (gitattributes_updated) {
++		git_attr_set_direction(GIT_ATTR_INDEX);
++		git_attr_set_direction(GIT_ATTR_CHECKOUT);
++	}
++#endif
++
+ 	git_attr_set_direction(GIT_ATTR_CHECKIN);
+ 
+ 	if (o->clone)
